@@ -26,7 +26,7 @@
 - **All Quotes:** Browse your complete library of saved quotes.
 - **Books View:** Explore quotes grouped by book covers in a visual gallery.
 - **Search Functionality:** Quickly search quotes, books, or authors.
-- **Type Filters:** Filter quotes by categories (e.g., green, red, blue, yellow).
+- **Type Filters:** Filter quotes by categories (e.g., green, red, blue, yellow, cyan).
 - **Notes Management:** Add, edit, or delete personal notes for each quote.
 - **Interactive Table View:** View and manage quotes in an organized table format.
 - **Dynamic Grid View:** Visualize book covers in a clean and modern grid layout.
@@ -40,9 +40,10 @@
 
 ## 📥 Data Import
 
-- Supports importing Kindle highlights from a `.txt` file.
+- Import Kindle highlights from a .txt file (My Clippings.txt).
 - Automatically processes and categorizes quotes.
 - Prevents duplicate entries in the database.
+- Generates an .xlsx file before importing into the database.
 
 ## 💾 Data Organization
 
@@ -79,14 +80,21 @@
 
 ## 📂 Project Structure
 ```
-My Quotes/
-├── app.py	    # Main application logic
-├── models.py	    # Database models
-├── templates/	    # HTML templates
-├── static/	    # CSS, JavaScript, and assets
-├── import_excel.py # Kindle highlights importer
-└── README.md	    # Project documentation
+MyQuotes/
+├── app.py             # Main Flask application
+├── models.py          # Database models
+├── import_excel.py    # Kindle highlights importer
+├── templates/         # HTML templates
+├── static/            # CSS, JavaScript, and assets
+├── data/
+│   ├── input/         # My Clippings.txt goes here
+│   └── output/        # quotes.xlsx is generated here
+├── instance/          # SQLite database (ignored by Git)
+├── requirements.txt   # Dependencies
+├── .env.example       # Example environment configuration
+└── README.md          # Project documentation
 ```
+
 
 ## 🌟 Future Improvements
 
@@ -96,7 +104,8 @@ My Quotes/
 
 ## 🤝 Contributing
 
-Feel free to open issues or submit pull requests. Contributions are welcome!
+Contributions, issues, and feature requests are welcome.
+Please fork the repository and open a pull request.
 
 ## 📄 License
 

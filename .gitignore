@@ -48,6 +48,9 @@ node_modules/
 Thumbs.db
 
 # Excel or data import/export files
+data/input/*
+data/output/*
 *.xlsx
 *.csv
 *.xls
+

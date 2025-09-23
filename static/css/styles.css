@@ -72,6 +72,10 @@
             background-color: #fff8bf;
         }
 
+        .filter-buttons .cyan {
+           background-color: #ccf5f9;
+        }
+
         .filter-buttons a:hover {
             opacity: 0.8;
         }
@@ -184,6 +188,10 @@
 
         tr[data-type="2"] {
             background-color: #fff8bf; /* Amarelo claro */
+        }
+
+        tr[data-type="5"] {
+           background-color: #ccf5f9; /* Ciano claro */
         }
 
         /* Galeria */

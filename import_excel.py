@@ -2,11 +2,15 @@ import pandas as pd
 from openpyxl import Workbook
 from app import db, app
 from models import Book, Quote
+from pathlib import Path
 import time
 
 # Caminhos dos arquivos
-INPUT_FILE = r'N:/Donwloads/My Clippings.txt'
-EXCEL_FILE = r'N:/Donwloads/quotes.xlsx'
+BASE_DIR = Path(__file__).resolve().parent  # raiz do projeto
+DATA_DIR = BASE_DIR / "data"
+
+INPUT_FILE = DATA_DIR / "input" / "My Clippings.txt"
+EXCEL_FILE = DATA_DIR / "output" / "quotes.xlsx"
 
 
 # -------------------------------
@@ -29,6 +33,8 @@ def get_type_and_note(note):
         return 4, note[4:].strip()
     if lower_note.startswith('amarelo'):
         return 2, note[7:].strip()
+    if lower_note.startswith('ciano'):
+        return 5, note[5:].strip()
 
     return 0, ''
 
@@ -65,6 +71,11 @@ def process_clippings():
         else:
             book_title = book_info.strip()
             author = 'Unknown'
+
+        # EXCLUIR HELPER FUNCTION
+        if book_title == "On the Calculation of Volume II":
+            print('citação do On the Calculation of Volume II ignorada')
+            continue
 
         meta_info = lines[1]
         page = None

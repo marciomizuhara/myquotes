@@ -1,6 +1,6 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, send_file
 from sqlalchemy import desc
-
+from image_utils import generate_quote_image
 from models import db, Book, Quote, Character, fetch_books
 from sqlalchemy.sql.expression import func
 from sqlalchemy.sql import text
@@ -232,6 +232,19 @@ def sql_query():
         except Exception as e:
             return f"Erro: {e}"
     return render_template('index.html', sql_results=results)
+
+
+@app.route('/download_quote/<int:quote_id>')
+def download_quote(quote_id):
+    # Busca a citação no banco de dados pelo ID
+    quote = Quote.query.get_or_404(quote_id)
+
+    # Usa as propriedades do objeto SQLAlchemy
+    file_path = generate_quote_image(quote.text, quote.book.author, quote.book.title)
+
+    # Retorna a imagem gerada para download
+    return send_file(file_path, as_attachment=True)
+
 
 
 if __name__ == '__main__':
