@@ -73,9 +73,9 @@ def process_clippings():
             author = 'Unknown'
 
         # EXCLUIR HELPER FUNCTION
-        if book_title == "On the Calculation of Volume II":
-            print('citação do On the Calculation of Volume II ignorada')
-            continue
+        # if book_title == "On the Calculation of Volume II":
+        #     print('citação do On the Calculation of Volume II ignorada')
+        #     continue
 
         meta_info = lines[1]
         page = None

@@ -7,6 +7,7 @@ from sqlalchemy.sql import text
 import os
 
 app = Flask(__name__)
+#app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql+psycopg://postgres:Arahuzim26052300!@db.voibxmtriglolckeomgh.supabase.co:5432/postgres'
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(app.instance_path, 'database.db')}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 

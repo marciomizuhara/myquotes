@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import desc
 from sqlalchemy.sql.expression import func
 
 db = SQLAlchemy()
@@ -33,12 +34,13 @@ class Quote(db.Model):
     book_id = db.Column(db.Integer, db.ForeignKey('books.id'), nullable=False)
     notes = db.Column(db.Text)  # Novo campo para anotações
 
+
 # Função para buscar livros
 def fetch_books():
     books_with_quotes = db.session.query(
         Book,
         func.count(Quote.id).label('quote_count')  # Conta as citações por livro
-    ).outerjoin(Quote, Book.id == Quote.book_id).group_by(Book.id).all()
+    ).outerjoin(Quote, Book.id == Quote.book_id).group_by(Book.id).order_by(desc(Book.id)).all()
 
     return books_with_quotes
 
