@@ -54,3 +54,8 @@ data/output/*
 *.csv
 *.xls
 
+# -----------------------------
+# MyQuotes – caches e artefatos de runtime
+# -----------------------------
+data/cache/
+data/quote_cache.json

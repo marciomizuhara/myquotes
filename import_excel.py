@@ -1,66 +1,168 @@
+import os
+import shutil
 import pandas as pd
+import json
+import time
+import re
+from sqlalchemy import func
 from openpyxl import Workbook
 from app import db, app
 from models import Book, Quote
 from pathlib import Path
-import time
+import win32com.client
 
-# Caminhos dos arquivos
-BASE_DIR = Path(__file__).resolve().parent  # raiz do projeto
+# -------------------------------
+# 0️⃣ Caminhos principais
+# -------------------------------
+BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
+INPUT_DIR = DATA_DIR / "input"
+OUTPUT_DIR = DATA_DIR / "output"
 
-INPUT_FILE = DATA_DIR / "input" / "My Clippings.txt"
-EXCEL_FILE = DATA_DIR / "output" / "quotes.xlsx"
+BACKUP_DIR = Path(r"C:\Users\marci\Desktop\myclippings_backup")
+INPUT_FILE = INPUT_DIR / "My Clippings.txt"
+EXCEL_FILE = OUTPUT_DIR / "quotes.xlsx"
+CACHE_FILE = DATA_DIR / "quote_cache.json"
+
+# -------------------------------
+# 🔁 Etapa de cópia do Kindle (INALTERADA)
+# -------------------------------
+def find_kindle_file():
+    print("🔍 Procurando o Kindle conectado...")
+
+    possible_drives = [f"{chr(c)}:" for c in range(65, 91)]
+    for drive in possible_drives:
+        kindle_path = Path(f"{drive}\\documents\\My Clippings.txt")
+        if kindle_path.exists():
+            print(f"📗 Kindle detectado via unidade ({drive})")
+            return kindle_path
+
+    shell = win32com.client.Dispatch("Shell.Application")
+    for item in shell.NameSpace(17).Items():
+        if "Kindle" in item.Name:
+            print(f"📘 Kindle detectado via MTP: {item.Name}")
+            try:
+                kindle_ns = item.GetFolder
+                docs_folder = kindle_ns.ParseName("Internal storage").GetFolder
+                documents = docs_folder.ParseName("documents").GetFolder
+                my_clippings = documents.ParseName("My Clippings.txt")
+                if my_clippings:
+                    print("✅ Arquivo My Clippings.txt encontrado (modo MTP)!")
+                    return my_clippings
+            except Exception:
+                pass
+
+    print("❌ Kindle não encontrado.")
+    return None
+
+
+def copy_from_kindle():
+    print("📥 Iniciando cópia do My Clippings do Kindle...\n")
+
+    kindle_item = find_kindle_file()
+    if not kindle_item:
+        print("❌ Arquivo My Clippings.txt não encontrado. Conecte o Kindle e tente novamente.")
+        return False
+
+    try:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        INPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+        backup_path = BACKUP_DIR / "My Clippings.txt"
+        input_path = INPUT_FILE
+
+        if isinstance(kindle_item, Path):
+            shutil.copy2(kindle_item, backup_path)
+            shutil.copy2(kindle_item, input_path)
+            print(f"✅ Copiado via unidade: {kindle_item}")
+        else:
+            shell = win32com.client.Dispatch("Shell.Application")
+            target_ns = shell.NameSpace(str(INPUT_DIR))
+            print("📄 Copiando via MTP (isso pode levar alguns segundos)...")
+            target_ns.CopyHere(kindle_item, 16)
+            time.sleep(2)
+            copied_path = INPUT_DIR / "My Clippings.txt"
+            if copied_path.exists():
+                shutil.copy2(copied_path, backup_path)
+            else:
+                raise FileNotFoundError("Falha ao copiar via MTP")
+
+        print(f"✅ Backup criado em: {backup_path}")
+        print(f"✅ Arquivo atualizado no diretório de input: {input_path}")
+        print("📚 Cópia concluída com sucesso! Prosseguindo para o processamento...\n")
+        return True
+
+    except Exception as e:
+        print(f"❌ Erro ao copiar arquivo: {e}")
+        return False
 
 
 # -------------------------------
-# 1️⃣ Lógica de Processamento do Kindle
+# 1️⃣ Lógica de Processamento
 # -------------------------------
-
 def get_type_and_note(note):
-    """
-    Determina o tipo com base na palavra-chave no conteúdo
-    e retorna também o texto restante como nota.
-    """
     note = note.strip()
     lower_note = note.lower()
-
-    if lower_note.startswith('verde'):
-        return 3, note[5:].strip()
+    if lower_note.startswith('nota'):
+        return -1, note
     if lower_note.startswith('vermelho'):
         return 1, note[8:].strip()
-    if lower_note.startswith('azul'):
-        return 4, note[4:].strip()
     if lower_note.startswith('amarelo'):
         return 2, note[7:].strip()
+    if lower_note.startswith('verde'):
+        return 3, note[5:].strip()
+    if lower_note.startswith('azul'):
+        note_body = note[4:].strip()
+        if 'hahaha' in lower_note or 'haha' in lower_note:
+            return 4, note_body
+        else:
+            return 6, note_body
     if lower_note.startswith('ciano'):
         return 5, note[5:].strip()
-
     return 0, ''
 
 
+def extract_rating_from_note(text):
+    if not text:
+        return None
+
+    match = re.search(r'(\d+(?:\.\d+)?)', text)
+    if not match:
+        return None
+
+    try:
+        value = float(match.group(1))
+        if 0.0 <= value <= 5.0:
+            return round(value, 1)
+    except ValueError:
+        pass
+
+    return None
+
+
 def process_clippings():
-    # Criar planilha Excel
     wb = Workbook()
     ws = wb.active
     ws.title = "Valid Quotes"
-    ws.append(['Page', 'Type', 'Quote', 'Author', 'Book', 'Note'])  # Removida coluna 'Cover'
+
+    ws.append([
+        'Page', 'Type', 'Quote', 'Author', 'Book', 'Note',
+        'LocationStart', 'LocationEnd'
+    ])
 
     with open(INPUT_FILE, 'r', encoding='utf-8') as f:
         raw_data = f.read()
 
-    blocks = raw_data.split('==========')
-    entries = []
-    last_highlight = None
+    blocks = [b.strip() for b in raw_data.split('==========') if b.strip()]
 
-    for i in range(len(blocks)):
-        block = blocks[i].strip()
-        if not block:
-            continue
+    highlights = {}
+    notes_by_location = {}
+    ratings_detected = []
 
-        lines = block.split('\n')
-        lines = [line.strip() for line in lines if line.strip()]
+    skipped_clippings = 0
 
+    for block in blocks:
+        lines = [line.strip() for line in block.split('\n') if line.strip()]
         if len(lines) < 2:
             continue
 
@@ -72,131 +174,256 @@ def process_clippings():
             book_title = book_info.strip()
             author = 'Unknown'
 
-        # EXCLUIR HELPER FUNCTION
-        # if book_title == "On the Calculation of Volume II":
-        #     print('citação do On the Calculation of Volume II ignorada')
-        #     continue
-
         meta_info = lines[1]
+        meta_lower = meta_info.lower()
+
         page = None
-        if 'page' in meta_info.lower():
-            page_part = [p for p in meta_info.split('|') if 'page' in p.lower()]
-            if page_part:
+        if 'page' in meta_lower:
+            parts = [p for p in meta_info.split('|') if 'page' in p.lower()]
+            if parts:
                 try:
-                    page = int(page_part[0].split()[-1])
+                    page = int(parts[0].split()[-1])
                 except ValueError:
                     page = None
 
-        content = '\n'.join(lines[2:]).strip()
-        note_type, note_text = get_type_and_note(content)
-
-        if note_type > 0 and last_highlight:
-            last_highlight['type'] = note_type
-            last_highlight['note'] = note_text
-            entries.append(last_highlight)
-            last_highlight = None
+        loc_match = re.search(r'location\s+(\d+)(?:-(\d+))?', meta_lower)
+        if not loc_match:
             continue
 
-        if 'highlight' in meta_info.lower():
-            last_highlight = {
+        loc_start = int(loc_match.group(1))
+        loc_end = int(loc_match.group(2)) if loc_match.group(2) else loc_start
+
+        content = '\n'.join(lines[2:]).strip()
+
+        if content.startswith("<You have reached") or "<You have reached" in content:
+            skipped_clippings += 1
+            continue
+
+        # ⭐ BLOCO ANTIGO DE RATING POR HIGHLIGHT (NEUTRALIZADO)
+        # Mantido propositalmente para preservar o script
+        if 'highlight' in meta_lower and content.lower().startswith('nota'):
+            continue
+
+        key = (book_title, author, loc_start, loc_end)
+
+        if 'highlight' in meta_lower:
+            highlights[key] = {
                 'page': page,
-                'type': 0,
                 'quote': content,
-                'note': '',
                 'author': author,
-                'book': book_title
+                'book': book_title,
+                'location_start': loc_start,
+                'location_end': loc_end
             }
 
-    for entry in entries:
+        elif 'note' in meta_lower:
+            note_type, note_text = get_type_and_note(content)
+            if note_type == 0:
+                continue
+
+            notes_by_location[(book_title, author, loc_start)] = {
+                'type': note_type,
+                'note': note_text
+            }
+
+    for (book, author, h_start, h_end), h in highlights.items():
+        final_type = 0
+        final_note = ''
+
+        for (nb, na, n_loc), note in notes_by_location.items():
+            if nb != book or na != author:
+                continue
+            if h_start <= n_loc <= h_end:
+                final_type = note['type']
+                final_note = note['note']
+                break
+
+        # ⭐ RATING: NOTE "Nota X" após associação canônica
+        if final_note.lower().startswith('nota'):
+            rating = extract_rating_from_note(final_note)
+            if rating is not None:
+                ratings_detected.append({
+                    'book': book,
+                    'author': author,
+                    'rating': rating
+                })
+                print(
+                    f"⭐ Rating detectado via NOTE | "
+                    f"Livro: {book} | "
+                    f"Location: {h_start}-{h_end} | "
+                    f"Valor: {rating}"
+                )
+            continue
+
+        if final_type == 0:
+            continue
+
         ws.append([
-            entry['page'],
-            entry['type'],
-            entry['quote'].strip(),
-            entry['author'],
-            entry['book'],
-            entry['note'].strip()
+            h['page'],
+            final_type,
+            h['quote'].strip(),
+            author,
+            book,
+            final_note.strip(),
+            h['location_start'],
+            h['location_end']
         ])
 
     wb.save(EXCEL_FILE)
     print(f"✅ Arquivo Excel salvo com sucesso: {EXCEL_FILE}")
+    print(f"📘 Ratings detectados: {len(ratings_detected)}")
+
+    return ratings_detected
 
 
 # -------------------------------
-# 2️⃣ Lógica de Importação para o Banco
+# 2️⃣ Importação para o banco
 # -------------------------------
-
-def import_from_excel():
-    with app.app_context():
+def load_cache():
+    if CACHE_FILE.exists():
         try:
-            df = pd.read_excel(EXCEL_FILE)
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            print("⚠️ Cache corrompido — recriando...")
+    return {}
 
-            for index, row in df.iterrows():
-                if pd.isna(row['Book']) or pd.isna(row['Quote']):
-                    print(f"🛑 Linha {index + 1}: Dados incompletos, pulando...")
-                    continue
 
-                # Busca por livro existente com comparação robusta
-                book = Book.query.filter(
-                    Book.title.ilike(row['Book'].strip()),
-                    Book.author.ilike(row['Author'].strip()) if pd.notna(row['Author']) else True
-                ).first()
+def save_cache(cache):
+    with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
 
-                if not book:
-                    # Criar livro caso não exista
-                    book = Book(
-                        title=row['Book'].strip(),
-                        author=row['Author'].strip() if pd.notna(row['Author']) else 'Unknown'
-                    )
-                    db.session.add(book)
-                    db.session.commit()
-                    print(f"📚 Livro criado: {book.title} - Autor: {book.author}")
 
-                # Busca por citação existente para evitar duplicação
-                existing_quote = Quote.query.filter(
-                    Quote.text.ilike(row['Quote'].strip()),
-                    Quote.book_id == book.id
-                ).first()
+def import_from_excel(ratings_detected):
+    with app.app_context():
+        df = pd.read_excel(EXCEL_FILE)
+        cache = load_cache()
 
-                if existing_quote:
-                    # Atualizar notas se necessário
-                    if pd.notna(row['Note']) and (
-                            not existing_quote.notes or existing_quote.notes.strip() != row['Note'].strip()):
-                        existing_quote.notes = row['Note'].strip()
-                        db.session.commit()
-                        print(f"🔄 Nota atualizada para citação existente: {existing_quote.text}")
-                    else:
-                        print(f"⚠️ Citação duplicada encontrada, sem alterações. (Linha {index + 1})")
-                    continue
+        inserted = 0
+        updated = 0
+        skipped = 0
 
-                # Criar nova citação
-                quote = Quote(
-                    page=int(row['Page']) if pd.notna(row['Page']) else None,
-                    type=row['Type'] if pd.notna(row['Type']) else '0',
-                    text=row['Quote'].strip(),
-                    notes=row['Note'].strip() if pd.notna(row['Note']) else '',
-                    book_id=book.id
+        CUTOFF_BOOK_ID = 63
+
+        existing_books = {
+            b.title.lower(): b
+            for b in Book.query.all()
+        }
+
+        # ⭐ Aplicação dos ratings
+        for item in ratings_detected:
+            book = existing_books.get(item['book'].lower())
+            if not book or book.id < CUTOFF_BOOK_ID:
+                continue
+
+            rating = item['rating']
+
+            if book.rating is None:
+                book.rating = rating
+                print(f"🟢 Rating definido | {book.title} = {rating}")
+            elif abs(book.rating - rating) >= 0.1:
+                old = book.rating
+                book.rating = rating
+                print(f"🟡 Rating atualizado | {book.title}: {old} → {rating}")
+            else:
+                print(f"⚪ Rating ignorado | {book.title}")
+
+        for idx, row in df.iterrows():
+            if pd.isna(row['Book']) or pd.isna(row['Quote']):
+                continue
+
+            book_title = row['Book'].strip()
+            book_key = book_title.lower()
+
+            book = existing_books.get(book_key)
+            if not book:
+                book = Book(
+                    title=book_title,
+                    author=row['Author'].strip() if pd.notna(row['Author']) else 'Unknown'
                 )
-                db.session.add(quote)
-                print(f"✅ Citação adicionada ao livro: {book.title}")
+                db.session.add(book)
+                db.session.flush()
+                existing_books[book_key] = book
 
-            db.session.commit()
-            print("🚀 Importação concluída com sucesso!")
+            if book.id < CUTOFF_BOOK_ID:
+                skipped += 1
+                continue
 
-        except Exception as e:
-            db.session.rollback()
-            print(f"❌ Erro: {e}")
+            quote_text = row['Quote'].strip()
+            note_text = row['Note'].strip() if isinstance(row['Note'], str) else ''
+            quote_type = int(row['Type']) if not pd.isna(row['Type']) else 0
+
+            if quote_type == 0:
+                skipped += 1
+                continue
+
+            loc_start = int(row['LocationStart']) if not pd.isna(row['LocationStart']) else None
+            loc_end = int(row['LocationEnd']) if not pd.isna(row['LocationEnd']) else None
+
+            cache_key = f"{book.id}|{loc_start}"
+            if cache_key in cache:
+                skipped += 1
+                continue
+
+            existing_quote = Quote.query.filter(
+                Quote.book_id == book.id,
+                Quote.location_start == loc_start
+            ).first()
+
+            if existing_quote:
+                changed = False
+
+                if len(quote_text) > len(existing_quote.text):
+                    existing_quote.text = quote_text
+                    changed = True
+
+                if note_text and (not existing_quote.notes or existing_quote.notes.strip() == ''):
+                    existing_quote.notes = note_text
+                    changed = True
+
+                if existing_quote.type != quote_type:
+                    existing_quote.type = quote_type
+                    changed = True
+
+                if changed:
+                    updated += 1
+
+                cache[cache_key] = True
+                skipped += 1
+                continue
+
+            new_quote = Quote(
+                book_id=book.id,
+                text=quote_text,
+                notes=note_text,
+                type=quote_type,
+                page=row['Page'] if not pd.notna(row['Page']) else None,
+                location_start=loc_start,
+                location_end=loc_end
+            )
+
+            db.session.add(new_quote)
+            cache[cache_key] = True
+            inserted += 1
+
+        db.session.commit()
+        save_cache(cache)
+
+        print("✅ Commit realizado com sucesso.")
+        print(f"🟢 Inseridas: {inserted}")
+        print(f"🟡 Atualizadas: {updated}")
+        print(f"⚪ Ignoradas: {skipped}")
 
 
 # -------------------------------
-# 3️⃣ Execução Unificada
+# 3️⃣ Execução principal
 # -------------------------------
-
 if __name__ == '__main__':
-    print("🔄 Processando My Clippings...")
-    process_clippings()
-
-    print("⏳ Aguardando para garantir que o arquivo esteja salvo...")
-    time.sleep(2)
-
-    print("📥 Importando para o banco de dados...")
-    import_from_excel()
+    if copy_from_kindle():
+        print("🔄 Processando My Clippings...")
+        ratings = process_clippings()
+        time.sleep(1)
+        print("📥 Importando para o banco...")
+        import_from_excel(ratings)
+    else:
+        print("❌ Operação cancelada — Kindle não encontrado.")
