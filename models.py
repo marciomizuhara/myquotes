@@ -34,17 +34,16 @@ class Quote(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     page = db.Column(db.Integer, nullable=True)
-    type = db.Column(db.Integer)  # alterado para integer
+    type = db.Column(db.Integer)
     text = db.Column(db.String(1000), nullable=False)
     notes = db.Column(db.Text)
-    is_favorite = db.Column(db.Integer, nullable=False, default=0)  # ✅ novo campo
-    book_id = db.Column(db.Integer, db.ForeignKey('books.id'), nullable=False)
 
-    # 🔹 Novos campos de location (Kindle)
+    is_active = db.Column(db.Integer, nullable=False, default=1)   # ✅ ADICIONAR
+    is_favorite = db.Column(db.Integer, nullable=False, default=0)
+
+    book_id = db.Column(db.Integer, db.ForeignKey('books.id'), nullable=False)
     location_start = db.Column(db.Integer, nullable=True)
     location_end = db.Column(db.Integer, nullable=True)
-
-
 
 
 def fetch_books():

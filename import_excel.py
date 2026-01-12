@@ -177,6 +177,10 @@ def process_clippings():
         meta_info = lines[1]
         meta_lower = meta_info.lower()
 
+        # 🔧 PATCH MÍNIMO — captura da data
+        date_match = re.search(r'Added on (.+)$', meta_info)
+        added_at = date_match.group(1).strip() if date_match else ''
+
         page = None
         if 'page' in meta_lower:
             parts = [p for p in meta_info.split('|') if 'page' in p.lower()]
@@ -199,22 +203,35 @@ def process_clippings():
             skipped_clippings += 1
             continue
 
-        # ⭐ BLOCO ANTIGO DE RATING POR HIGHLIGHT (NEUTRALIZADO)
-        # Mantido propositalmente para preservar o script
         if 'highlight' in meta_lower and content.lower().startswith('nota'):
             continue
 
         key = (book_title, author, loc_start, loc_end)
 
         if 'highlight' in meta_lower:
-            highlights[key] = {
+            candidate = {
                 'page': page,
                 'quote': content,
                 'author': author,
                 'book': book_title,
                 'location_start': loc_start,
-                'location_end': loc_end
+                'location_end': loc_end,
+                'added_at': added_at
             }
+
+            existing = highlights.get(key)
+
+            if not existing:
+                highlights[key] = candidate
+            else:
+                if (
+                    len(candidate['quote']) > len(existing['quote']) or
+                    (
+                        len(candidate['quote']) == len(existing['quote']) and
+                        candidate['added_at'] > existing.get('added_at', '')
+                    )
+                ):
+                    highlights[key] = candidate
 
         elif 'note' in meta_lower:
             note_type, note_text = get_type_and_note(content)
@@ -238,7 +255,6 @@ def process_clippings():
                 final_note = note['note']
                 break
 
-        # ⭐ RATING: NOTE "Nota X" após associação canônica
         if final_note.lower().startswith('nota'):
             rating = extract_rating_from_note(final_note)
             if rating is not None:
@@ -298,6 +314,7 @@ def import_from_excel(ratings_detected):
     with app.app_context():
         df = pd.read_excel(EXCEL_FILE)
         cache = load_cache()
+        quotes_committed = set()
 
         inserted = 0
         updated = 0
@@ -353,17 +370,28 @@ def import_from_excel(ratings_detected):
             note_text = row['Note'].strip() if isinstance(row['Note'], str) else ''
             quote_type = int(row['Type']) if not pd.isna(row['Type']) else 0
 
+            loc_start = int(row['LocationStart']) if not pd.isna(row['LocationStart']) else None
+            loc_end = int(row['LocationEnd']) if not pd.isna(row['LocationEnd']) else None
+            page = row['Page']
+
+            # 🧨 PRINT CRÍTICO — QUOTE A QUOTE
+            print(
+                f"➡️ Processando Quote | "
+                f"Livro: {book.title} | "
+                f"Location: {loc_start}-{loc_end} | "
+                f"Page: {page} | "
+                f"Type: {quote_type}"
+            )
+
             if quote_type == 0:
                 skipped += 1
                 continue
 
-            loc_start = int(row['LocationStart']) if not pd.isna(row['LocationStart']) else None
-            loc_end = int(row['LocationEnd']) if not pd.isna(row['LocationEnd']) else None
-
-            cache_key = f"{book.id}|{loc_start}"
-            if cache_key in cache:
+            if book.id >= CUTOFF_BOOK_ID and loc_start is None:
                 skipped += 1
                 continue
+
+            cache_key = f"{book.id}|{loc_start}"
 
             existing_quote = Quote.query.filter(
                 Quote.book_id == book.id,
@@ -388,7 +416,7 @@ def import_from_excel(ratings_detected):
                 if changed:
                     updated += 1
 
-                cache[cache_key] = True
+                quotes_committed.add(cache_key)
                 skipped += 1
                 continue
 
@@ -397,16 +425,18 @@ def import_from_excel(ratings_detected):
                 text=quote_text,
                 notes=note_text,
                 type=quote_type,
-                page=row['Page'] if not pd.notna(row['Page']) else None,
+                page=page if not pd.isna(page) else None,
                 location_start=loc_start,
                 location_end=loc_end
             )
 
             db.session.add(new_quote)
-            cache[cache_key] = True
+            quotes_committed.add(cache_key)
             inserted += 1
 
         db.session.commit()
+        for key in quotes_committed:
+            cache[key] = True
         save_cache(cache)
 
         print("✅ Commit realizado com sucesso.")
